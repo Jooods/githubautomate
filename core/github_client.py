@@ -29,8 +29,27 @@ class GitHubClient:
     def get_authenticated_user(self) -> Dict[str, Any]:
         """Verify token and return authenticated user details."""
         u = self.client.get_user()
-        rate = self.client.get_rate_limit()
-        
+
+        # Safely extract rate limit — PyGithub 2.10 uses rate.resources.core
+        rate_remaining = 0
+        rate_limit = 0
+        rate_reset = None
+        try:
+            rate = self.client.get_rate_limit()
+            # PyGithub 2.10: RateLimitOverview has .resources.core (not .core directly)
+            resources = getattr(rate, 'resources', None)
+            core = getattr(resources, 'core', None) if resources else None
+            # Fallback: older builds may expose .rate directly
+            if core is None:
+                core = getattr(rate, 'rate', None)
+            if core:
+                rate_remaining = getattr(core, 'remaining', 0)
+                rate_limit = getattr(core, 'limit', 0)
+                reset_dt = getattr(core, 'reset', None)
+                rate_reset = reset_dt.isoformat() if reset_dt else None
+        except Exception:
+            pass
+
         return {
             "login": u.login,
             "name": u.name or u.login,
@@ -41,9 +60,9 @@ class GitHubClient:
             "total_private_repos": getattr(u, 'total_private_repos', 0) or 0,
             "followers": u.followers,
             "following": u.following,
-            "rate_limit_remaining": rate.core.remaining,
-            "rate_limit_limit": rate.core.limit,
-            "rate_limit_reset": rate.core.reset.isoformat() if rate.core.reset else None
+            "rate_limit_remaining": rate_remaining,
+            "rate_limit_limit": rate_limit,
+            "rate_limit_reset": rate_reset
         }
 
     def list_repositories(self, repo_type: str = "all", sort: str = "updated", 
